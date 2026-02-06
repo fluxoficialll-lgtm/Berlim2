@@ -1,134 +1,117 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authService';
 import { trackingService } from '../services/trackingService';
 import { API_BASE } from '../apiConfig';
 import { LoginInitialCard } from '../features/auth/components/LoginInitialCard';
 import { LoginEmailCard } from '../features/auth/components/LoginEmailCard';
+import { User } from '@/types';
 
 declare const google: any;
 
 export const Login: React.FC = () => {
     const navigate = useNavigate();
-    const location = useLocation();
     const [loading, setLoading] = useState(true);
-    const [googleAuthProcessing, setGoogleAuthProcessing] = useState(false);
+    const [authProcessing, setAuthProcessing] = useState(false);
     const [error, setError] = useState('');
     
-    // Email/Password State
+    // State for email/password form
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showEmailForm, setShowEmailForm] = useState(false);
     
-    const buttonRendered = React.useRef(false);
     const GOOGLE_BTN_ID = 'googleButtonDiv';
 
-    // Affiliate Detection
+    // Detect affiliate refs from URL params
     useEffect(() => {
         trackingService.captureUrlParams();
-    }, [location]);
+    }, []);
 
-    const handleRedirect = useCallback((user: any, isNewUser: boolean = false) => {
-        setGoogleAuthProcessing(false);
-        if (isNewUser || (user && !user.isProfileCompleted)) {
-            navigate('/complete-profile', { replace: true });
-            return;
-        }
-        const pendingRedirect = sessionStorage.getItem('redirect_after_login') || (location.state as any)?.from?.pathname;
-        if (pendingRedirect && pendingRedirect !== '/' && !pendingRedirect.includes('login')) {
-            sessionStorage.removeItem('redirect_after_login');
-            navigate(pendingRedirect, { replace: true });
-        } else {
-            navigate('/feed', { replace: true });
-        }
-    }, [navigate, location]);
-
+    // Check if user is already authenticated
     useEffect(() => {
-        const user = authService.getCurrentUser();
-        if (user && authService.isAuthenticated()) {
-            handleRedirect(user);
+        if (authService.isAuthenticated()) {
+            const user = authService.getCurrentUser();
+            if (user) {
+                const nextStep = user.isBanned ? '/banned' : (!user.isProfileCompleted ? '/complete-profile' : '/feed');
+                navigate(nextStep, { replace: true });
+            }
         } else {
             setLoading(false);
         }
-    }, [handleRedirect]);
+    }, [navigate]);
 
-    const handleCredentialResponse = useCallback(async (response: any) => {
-        setGoogleAuthProcessing(true);
+    // Handler for Google's credential response
+    const handleGoogleLogin = useCallback(async (response: any) => {
+        if (authProcessing) return;
+        setAuthProcessing(true);
         setError('');
         try {
-            if (!response || !response.credential) throw new Error("Login falhou.");
+            if (!response || !response.credential) throw new Error("Credencial do Google inválida.");
             const referredBy = trackingService.getAffiliateRef() || undefined;
             const result = await authService.loginWithGoogle(response.credential, referredBy);
-            if (result && result.user) {
-                const isNew = result.nextStep === '/complete-profile' || !result.user.isProfileCompleted;
-                handleRedirect(result.user, isNew);
-            }
+            navigate(result.nextStep, { replace: true });
         } catch (err: any) {
-            setError(err.message || 'Falha ao autenticar.');
-            setGoogleAuthProcessing(false);
+            setError(err.message || 'Falha ao autenticar com Google.');
+            setAuthProcessing(false);
         }
-    }, [handleRedirect]);
+    }, [navigate, authProcessing]);
 
+    // Handler for traditional email/password login
     const handleEmailLogin = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!email || !password || googleAuthProcessing) return;
-        setGoogleAuthProcessing(true);
+        if (!email || !password || authProcessing) return;
+        setAuthProcessing(true);
         setError('');
         try {
             const result = await authService.login(email, password);
-            if (result && result.user) {
-                const isNew = result.nextStep === '/complete-profile' || !result.user.isProfileCompleted;
-                handleRedirect(result.user, isNew);
-            }
+            navigate(result.nextStep, { replace: true });
         } catch (err: any) {
             setError(err.message || 'Credenciais inválidas.');
-            setGoogleAuthProcessing(false);
+            setAuthProcessing(false);
         }
     };
 
-    // Google Init logic remains stable in the parent
+    // Initialize Google Sign-In button
     useEffect(() => {
-        if (showEmailForm) return; // Don't init if not on initial card
-        
-        let isMounted = true;
+        if (showEmailForm || loading) return;
+
         const initGoogle = async () => {
-            let clientId = "";
             try {
                 const res = await fetch(`${API_BASE}/api/auth/config`);
-                if (res.ok) {
-                    const data = await res.json();
-                    clientId = data.clientId;
-                }
-            } catch (err) {}
+                if (!res.ok) return;
+                const { clientId } = await res.json();
+                if (!clientId || clientId.includes("CONFIGURADO")) return;
 
-            if (!isMounted || !clientId || clientId.includes("CONFIGURADO")) return;
-
-            const interval = setInterval(() => {
-                const btnDiv = document.getElementById(GOOGLE_BTN_ID);
-                if (typeof google !== 'undefined' && google.accounts && btnDiv) {
-                    clearInterval(interval);
-                    google.accounts.id.initialize({
-                        client_id: clientId,
-                        callback: handleCredentialResponse,
-                        auto_select: false
-                    });
-                    google.accounts.id.renderButton(btnDiv, {
-                        theme: 'filled_black',
-                        size: 'large',
-                        width: '400'
-                    });
+                if (typeof google !== 'undefined' && google.accounts) {
+                    google.accounts.id.initialize({ client_id: clientId, callback: handleGoogleLogin });
+                    const btnDiv = document.getElementById(GOOGLE_BTN_ID);
+                    if (btnDiv) {
+                         google.accounts.id.renderButton(btnDiv, { theme: 'filled_black', size: 'large', width: '400' });
+                    }
                 }
-            }, 100);
+            } catch (err) {
+                console.error("Failed to init Google Sign-In", err);
+            }
         };
-        initGoogle();
-        return () => { isMounted = false; };
-    }, [showEmailForm, handleCredentialResponse]);
 
-    if (loading) return null;
+        const-script = document.createElement('script');
+        script.src = "https://accounts.google.com/gsi/client";
+        script.async = true;
+        script.defer = true;
+        script.onload = initGoogle;
+        document.body.appendChild(script);
+
+        return () => {
+            document.body.removeChild(script);
+        };
+    }, [showEmailForm, loading, handleGoogleLogin]);
+
+    if (loading) return null; // Render nothing while checking auth status
 
     return (
         <div className="min-h-screen w-full flex flex-col items-center justify-center bg-[#050505] text-white font-['Inter'] relative overflow-hidden">
+            {/* Background decorative elements */}
             <div className="absolute inset-0 z-0 pointer-events-none">
                 <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-blue-900/10 rounded-full blur-[120px]"></div>
                 <div className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] bg-indigo-900/10 rounded-full blur-[100px]"></div>
@@ -143,19 +126,19 @@ export const Login: React.FC = () => {
                         setPassword={setPassword}
                         onSubmit={handleEmailLogin}
                         onBackToGoogle={() => setShowEmailForm(false)}
-                        loading={googleAuthProcessing}
+                        loading={authProcessing}
                         error={error}
                     />
                 ) : (
                     <LoginInitialCard 
                         onSelectEmail={() => setShowEmailForm(true)}
                         googleButtonId={GOOGLE_BTN_ID}
-                        loading={loading}
-                        googleProcessing={googleAuthProcessing}
+                        loading={loading} // Changed from loading to false to always show content
+                        googleProcessing={authProcessing}
                     />
                 )}
                 
-                {googleAuthProcessing && (
+                {authProcessing && (
                     <div className="absolute inset-0 bg-black/20 backdrop-blur-sm rounded-[32px] flex items-center justify-center z-50">
                         <i className="fa-solid fa-circle-notch fa-spin text-[#00c2ff] text-2xl"></i>
                     </div>
