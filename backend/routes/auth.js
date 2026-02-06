@@ -61,6 +61,7 @@ router.post('/google', async (req, res) => {
         if (!googleId) {
             googleId = `mock_${crypto.randomUUID().substring(0, 8)}`;
             email = `guest_${googleId}@gmail.com`;
+            name = `Guest ${googleId.slice(-4)}`;
         }
 
         // 2. Operações de Banco de Dados
